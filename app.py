@@ -164,7 +164,7 @@ CSS = """
   --nccn-blue-light:#e7f1f9;
   --nccn-blue-pale:#f4f9fd;
 }
-.stApp{ background:var(--nccn-blue-pale); }
+.stApp{ background:var(--nccn-blue-pale); color:#1a1a1a; }
 .block-container{ max-width:820px; }
 .masthead{
   display:flex; align-items:center; gap:16px;
