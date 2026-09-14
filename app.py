@@ -1,6 +1,7 @@
 import os
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import streamlit as st
 import pandas as pd
@@ -40,8 +41,6 @@ def get_client():
         st.error("Missing GOOGLE_SHEET_ID. Add it to .env or .streamlit/secrets.toml (see README.md).")
         st.stop()
 
-    # Credentials can come from a JSON file path OR raw JSON text (handy for
-    # Streamlit Cloud secrets, which can't easily hold a file).
     creds_json_text = get_secret("GOOGLE_SERVICE_ACCOUNT_JSON")
     creds_file = get_secret("GOOGLE_SERVICE_ACCOUNT_FILE")
 
@@ -89,7 +88,7 @@ def insert_response(name, score, problems, other_concerns, patient_id="", durati
 
 def fetch_responses() -> pd.DataFrame:
     ws = get_client()
-    records = ws.get_all_records()  # uses row 1 as header
+    records = ws.get_all_records()
     if not records:
         return pd.DataFrame(columns=HEADER_ROW)
     df = pd.DataFrame(records)
@@ -109,7 +108,11 @@ def fetch_responses() -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# Data: problem list categories (word-for-word from the NCCN questionnaire)
+# Data: problem list categories (word-for-word from the NCCN questionnaire).
+# These English strings are the PERMANENT internal identifiers -- used as
+# session_state keys and saved to the Sheet -- regardless of which language
+# is displayed. Kannada is a pure display-text overlay on top (see
+# load_text_content() / t() / t_category() / t_item() below).
 # ---------------------------------------------------------------------------
 
 PROBLEM_LIST = {
@@ -141,16 +144,56 @@ PROBLEM_LIST = {
     ],
 }
 
-DISTRESS_DEFINITION = (
-    "Distress is an unpleasant experience of a mental, physical, social, or "
-    "spiritual nature. It can affect the way you think, feel, or act. Distress "
-    "may make it harder to cope with having cancer, its symptoms, or its treatment."
-)
+# ---------------------------------------------------------------------------
+# Bilingual text loading. English is the source of truth for which keys
+# exist; Kannada falls back to English automatically for anything missing
+# (or, right now, for everything -- nccn_text_kn.json is currently a
+# PLACEHOLDER file, see README.md).
+# ---------------------------------------------------------------------------
 
-INSTRUCTIONS = (
-    "Instructions: Please circle the number (0\u201310) that best describes how "
-    "much distress you have been experiencing in the past week, including today."
-)
+APP_DIR = Path(__file__).parent
+
+@st.cache_data
+def load_text_content():
+    with open(APP_DIR / "nccn_text_en.json", encoding="utf-8") as f:
+        en = json.load(f)
+    kn = {}
+    kn_path = APP_DIR / "nccn_text_kn.json"
+    if kn_path.exists():
+        with open(kn_path, encoding="utf-8") as f:
+            kn = json.load(f)
+    return en, kn
+
+TEXT_EN, TEXT_KN = load_text_content()
+
+
+def t(key: str) -> str:
+    """UI string lookup, falling back to English if untranslated/missing."""
+    lang = st.session_state.get("language", "en")
+    if lang == "kn":
+        val = TEXT_KN.get("ui", {}).get(key)
+        if val:
+            return val
+    return TEXT_EN.get("ui", {}).get(key, key)
+
+
+def t_category(category: str) -> str:
+    lang = st.session_state.get("language", "en")
+    if lang == "kn":
+        val = TEXT_KN.get("categories", {}).get(category)
+        if val:
+            return val
+    return TEXT_EN.get("categories", {}).get(category, category)
+
+
+def t_item(item: str) -> str:
+    lang = st.session_state.get("language", "en")
+    if lang == "kn":
+        val = TEXT_KN.get("items", {}).get(item)
+        if val:
+            return val
+    return TEXT_EN.get("items", {}).get(item, item)
+
 
 # ---------------------------------------------------------------------------
 # Styling
@@ -167,7 +210,7 @@ CSS = """
   --nccn-blue-pale:#f4f9fd;
 }
 .stApp{ background:var(--nccn-blue-pale); color:#1a1a1a; }
-.block-container{ max-width:820px; }
+.block-container{ max-width:1000px; }
 .masthead{
   display:flex; align-items:center; gap:16px;
   padding:10px 0 16px 0; border-bottom:3px solid var(--nccn-blue-dark); margin-bottom:20px;
@@ -191,6 +234,12 @@ CSS = """
   font-weight:bold; font-size:12px; margin-top:20px;
 }
 div[data-testid="stVerticalBlockBorderWrapper"]{ background:#fff; border-radius:6px; }
+button[data-testid="stBaseButton-secondary"] p,
+button[data-testid="stBaseButton-primary"] p {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -246,7 +295,9 @@ def thermometer_svg(selected):
 # ---------------------------------------------------------------------------
 
 if "page" not in st.session_state:
-    st.session_state.page = 1
+    st.session_state.page = "language"  # "language" -> "form" -> "done"
+if "language" not in st.session_state:
+    st.session_state.language = "en"
 if "score" not in st.session_state:
     st.session_state.score = None
 if "name" not in st.session_state:
@@ -265,100 +316,110 @@ if "session_start_time" not in st.session_state:
 render_header()
 
 # ---------------------------------------------------------------------------
-# PAGE 1
+# PAGE: language choice
 # ---------------------------------------------------------------------------
 
-if st.session_state.page == 1:
-    st.session_state.name = st.text_input("Name:", value=st.session_state.name)
-
-    st.markdown('<div class="section-title">NCCN DISTRESS THERMOMETER</div>', unsafe_allow_html=True)
-    st.write(DISTRESS_DEFINITION)
-    st.markdown(f"**{INSTRUCTIONS}**")
-
-    left, mid, right = st.columns([1, 2, 1])
-    with mid:
-        
-        st.image("assets/thermometer.png", use_container_width=True)
-
-    st.write("")
-    cols = st.columns(11)
-    for i, c in enumerate(cols):
-        label = str(10 - i)
-        val = 10 - i
-        if c.button(label, key=f"score_{val}", use_container_width=True):
-            st.session_state.score = val
+if st.session_state.page == "language":
+    st.markdown(
+        "<h3 style='text-align:center'>Choose your language<br>ನಿಮ್ಮ ಭಾಷೆಯನ್ನು ಆಯ್ಕೆಮಾಡಿ</h3>",
+        unsafe_allow_html=True,
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("English", use_container_width=True, type="primary"):
+            st.session_state.language = "en"
+            st.session_state.page = "form"
+            st.rerun()
+    with col2:
+        if st.button("ಕನ್ನಡ", use_container_width=True, type="primary"):
+            st.session_state.language = "kn"
+            st.session_state.page = "form"
             st.rerun()
 
-    if st.session_state.score is not None:
+# ---------------------------------------------------------------------------
+# PAGE: form (thermometer + problem list, all on one page)
+# ---------------------------------------------------------------------------
+
+elif st.session_state.page == "form":
+    st.session_state.name = st.text_input(t("nameLabel"), value=st.session_state.name)
+
+    therm_col, problems_col = st.columns([1, 2])
+
+    with therm_col:
+        st.markdown(f'<div class="section-title">{t("thermometerSectionTitle")}</div>', unsafe_allow_html=True)
+        st.write(t("distressDefinition"))
+        st.markdown(f"**{t('instructions')}**")
+
         st.markdown(
-            f"<p style='text-align:center;color:#0b3d6e;font-weight:bold;'>"
-            f"Selected score: {st.session_state.score} / 10</p>",
+            f"<p style='text-align:center;font-weight:bold;color:#0b3d6e;margin-bottom:4px'>{t('extremeDistress')}</p>",
             unsafe_allow_html=True,
         )
-    else:
         st.markdown(
-            "<p style='text-align:center;color:#999;'>No score selected yet</p>",
+            f"<div style='display:flex;justify-content:center'>{thermometer_svg(st.session_state.score)}</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<p style='text-align:center;font-weight:bold;color:#0b3d6e;margin-top:4px'>{t('noDistress')}</p>",
             unsafe_allow_html=True,
         )
 
-    st.write("")
-    _, nav_col = st.columns([3, 1])
-    with nav_col:
-        if st.button("Next: Problem List \u2192", type="primary", use_container_width=True):
-            if st.session_state.score is None:
-                st.warning("Please select a distress score before continuing.")
-            else:
-                st.session_state.page = 2
+        score_cols = st.columns(4)
+        for i in range(11):
+            c = score_cols[i % 4]
+            if c.button(str(i), key=f"score_{i}", use_container_width=True):
+                st.session_state.score = i
                 st.rerun()
 
-# ---------------------------------------------------------------------------
-# PAGE 2
-# ---------------------------------------------------------------------------
+        if st.session_state.score is not None:
+            st.markdown(
+                f"<p style='text-align:center;color:#0b3d6e;font-weight:bold;'>"
+                f"{t('scoreSelectedLabel')}: {st.session_state.score} / 10</p>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f"<p style='text-align:center;color:#999;'>{t('noScoreLabel')}</p>",
+                unsafe_allow_html=True,
+            )
 
-elif st.session_state.page == 2:
-    st.markdown('<div class="section-title">PROBLEM LIST</div>', unsafe_allow_html=True)
-    st.markdown(
-        "**Have you had concerns about any of the items below in the past week, "
-        "including today? (Mark all that apply)**"
-    )
+    with problems_col:
+        st.markdown(f'<div class="section-title">{t("problemListSectionTitle")}</div>', unsafe_allow_html=True)
+        st.markdown(f"**{t('problemListIntro')}**")
 
-    left_cats = ["Physical Concerns", "Emotional Concerns", "Social Concerns"]
-    right_cats = ["Practical Concerns", "Spiritual or Religious Concerns"]
+        left_cats = ["Physical Concerns", "Emotional Concerns", "Social Concerns"]
+        right_cats = ["Practical Concerns", "Spiritual or Religious Concerns"]
 
-    col_left, col_right = st.columns(2)
+        col_left, col_right = st.columns(2)
 
-    with col_left:
-        for cat in left_cats:
-            st.markdown(f'<div class="cat-title">{cat}</div>', unsafe_allow_html=True)
-            for item in PROBLEM_LIST[cat]:
-                key = f"chk::{cat}::{item}"
-                st.session_state.checked[key] = st.checkbox(
-                    item, value=st.session_state.checked.get(key, False), key=key
-                )
+        with col_left:
+            for cat in left_cats:
+                st.markdown(f'<div class="cat-title">{t_category(cat)}</div>', unsafe_allow_html=True)
+                for item in PROBLEM_LIST[cat]:
+                    key = f"chk::{cat}::{item}"
+                    st.session_state.checked[key] = st.checkbox(
+                        t_item(item), value=st.session_state.checked.get(key, False), key=key
+                    )
 
-    with col_right:
-        for cat in right_cats:
-            st.markdown(f'<div class="cat-title">{cat}</div>', unsafe_allow_html=True)
-            for item in PROBLEM_LIST[cat]:
-                key = f"chk::{cat}::{item}"
-                st.session_state.checked[key] = st.checkbox(
-                    item, value=st.session_state.checked.get(key, False), key=key
-                )
+        with col_right:
+            for cat in right_cats:
+                st.markdown(f'<div class="cat-title">{t_category(cat)}</div>', unsafe_allow_html=True)
+                for item in PROBLEM_LIST[cat]:
+                    key = f"chk::{cat}::{item}"
+                    st.session_state.checked[key] = st.checkbox(
+                        t_item(item), value=st.session_state.checked.get(key, False), key=key
+                    )
 
-        st.markdown('<div class="cat-title">Other Concerns:</div>', unsafe_allow_html=True)
-        st.session_state.other_concerns = st.text_area(
-            "Other Concerns", value=st.session_state.other_concerns,
-            label_visibility="collapsed", height=100,
-        )
+            st.markdown(f'<div class="cat-title">{t("otherConcernsLabel")}</div>', unsafe_allow_html=True)
+            st.session_state.other_concerns = st.text_area(
+                "Other Concerns", value=st.session_state.other_concerns,
+                label_visibility="collapsed", height=100,
+            )
 
     st.write("")
-    back_col, submit_col = st.columns(2)
-    with back_col:
-        if st.button("\u2190 Back", use_container_width=True):
-            st.session_state.page = 1
-            st.rerun()
-    with submit_col:
-        if st.button("Submit Response", type="primary", use_container_width=True):
+    if st.button(t("submitButton"), type="primary", use_container_width=True):
+        if st.session_state.score is None:
+            st.warning(t("submitMissingScore"))
+        else:
             problems = []
             for key, is_checked in st.session_state.checked.items():
                 if is_checked:
@@ -376,26 +437,26 @@ elif st.session_state.page == 2:
                     patient_id=st.session_state.patient_id,
                     duration_seconds=duration_seconds,
                 )
-                st.session_state.page = 3
+                st.session_state.page = "done"
                 st.rerun()
             except Exception as e:
                 st.error(f"Could not save response: {e}")
 
 # ---------------------------------------------------------------------------
-# CONFIRMATION
+# PAGE: confirmation
 # ---------------------------------------------------------------------------
 
-elif st.session_state.page == 3:
+elif st.session_state.page == "done":
     st.markdown(
-        "<div style='text-align:center;padding:40px 0;'>"
-        "<div style='font-size:48px;color:#1f6fae;'>&#10003;</div>"
-        "<h2 style='color:#0b3d6e;'>Thank you</h2>"
-        "<p>Your response has been recorded.</p>"
-        "</div>",
+        f"<div style='text-align:center;padding:40px 0;'>"
+        f"<div style='font-size:48px;color:#1f6fae;'>&#10003;</div>"
+        f"<h2 style='color:#0b3d6e;'>{t('thankYouTitle')}</h2>"
+        f"<p>{t('thankYouMessage')}</p>"
+        f"</div>",
         unsafe_allow_html=True,
     )
-    if st.button("Start a new response", type="primary"):
-        st.session_state.page = 1
+    if st.button(t("startOverButton"), type="primary"):
+        st.session_state.page = "language"
         st.session_state.score = None
         st.session_state.name = ""
         st.session_state.checked = {}
@@ -403,7 +464,7 @@ elif st.session_state.page == 3:
         st.session_state.session_start_time = datetime.now(timezone.utc)
         st.rerun()
 
-st.markdown('<div class="cat2a">Note: All recommendations are category 2A unless otherwise indicated.</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="cat2a">{t("cat2aNote")}</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Admin sidebar: view / export saved responses
