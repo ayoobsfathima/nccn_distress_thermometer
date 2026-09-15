@@ -247,13 +247,13 @@ st.markdown(CSS, unsafe_allow_html=True)
 
 def render_header():
     st.markdown(
-        """
+        f"""
         <div class="masthead">
           <div class="logo-mark">NCCN</div>
           <div class="logo-text">National<br>Comprehensive<br>Cancer<br>Network&reg;</div>
           <div>
-            <p class="title-sub">NCCN Guidelines Version 1.2025</p>
-            <p class="title-main">Distress Management</p>
+            <p class="title-sub">{t('titleSub')}</p>
+            <p class="title-main">{t('titleMain')}</p>
           </div>
         </div>
         """,
