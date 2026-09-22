@@ -247,13 +247,13 @@ st.markdown(CSS, unsafe_allow_html=True)
 
 def render_header():
     st.markdown(
-        f"""
+        """
         <div class="masthead">
           <div class="logo-mark">NCCN</div>
           <div class="logo-text">National<br>Comprehensive<br>Cancer<br>Network&reg;</div>
           <div>
-            <p class="title-sub">{t('titleSub')}</p>
-            <p class="title-main">{t('titleMain')}</p>
+            <p class="title-sub">NCCN Guidelines Version 1.2025</p>
+            <p class="title-main">Distress Management</p>
           </div>
         </div>
         """,
@@ -363,12 +363,24 @@ elif st.session_state.page == "form":
             unsafe_allow_html=True,
         )
 
-        score_cols = st.columns(4)
-        for i in range(11):
-            c = score_cols[i % 4]
-            if c.button(str(i), key=f"score_{i}", use_container_width=True):
-                st.session_state.score = i
-                st.rerun()
+        # A fresh set of 4 columns PER ROW (0-3, 4-7, 8-10), instead of one
+        # shared set of 4 columns with several numbers stacked in each
+        # (the old code put 0,4,8 all in column 1; 1,5,9 in column 2; etc).
+        # On a narrow phone, Streamlit collapses each row's own columns to
+        # a vertical stack in order, so row 1 becomes 0,1,2,3, then row 2
+        # becomes 4,5,6,7, then row 3 becomes 8,9,10 -- always ascending.
+        # The old layout collapsed column-by-column instead of row-by-row
+        # (0,4,8, then 1,5,9, then 2,6,10, then 3,7), which is what made
+        # the numbers look jumbled on mobile.
+        numbers = list(range(11))
+        row_size = 4
+        for row_start in range(0, len(numbers), row_size):
+            row_numbers = numbers[row_start : row_start + row_size]
+            row_cols = st.columns(row_size)
+            for col, i in zip(row_cols, row_numbers):
+                if col.button(str(i), key=f"score_{i}", use_container_width=True):
+                    st.session_state.score = i
+                    st.rerun()
 
         if st.session_state.score is not None:
             st.markdown(
