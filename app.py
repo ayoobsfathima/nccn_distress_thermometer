@@ -459,22 +459,18 @@ elif st.session_state.page == "form":
 # ---------------------------------------------------------------------------
 
 elif st.session_state.page == "done":
+    # Final screen: no buttons. The person just closes the tab.
+    if st.session_state.language == "kn":
+        done_msg = "ನಿಮ್ಮ ಪ್ರತಿಕ್ರಿಯೆಯನ್ನು ಯಶಸ್ವಿಯಾಗಿ ದಾಖಲಿಸಲಾಗಿದೆ. ಧನ್ಯವಾದಗಳು. ನೀವು ಈಗ ಈ ಟ್ಯಾಬ್ ಅನ್ನು ಮುಚ್ಚಬಹುದು."
+    else:
+        done_msg = "Your response has been successfully recorded. Thank you. You may now close this tab."
     st.markdown(
         f"<div style='text-align:center;padding:40px 0;'>"
         f"<div style='font-size:48px;color:#1f6fae;'>&#10003;</div>"
-        f"<h2 style='color:#0b3d6e;'>{t('thankYouTitle')}</h2>"
-        f"<p>{t('thankYouMessage')}</p>"
+        f"<p style='font-size:18px;color:#0b3d6e;'>{done_msg}</p>"
         f"</div>",
         unsafe_allow_html=True,
     )
-    if st.button(t("startOverButton"), type="primary"):
-        st.session_state.page = "language"
-        st.session_state.score = None
-        st.session_state.name = ""
-        st.session_state.checked = {}
-        st.session_state.other_concerns = ""
-        st.session_state.session_start_time = datetime.now(timezone.utc)
-        st.rerun()
 
 st.markdown(f'<div class="cat2a">{t("cat2aNote")}</div>', unsafe_allow_html=True)
 
