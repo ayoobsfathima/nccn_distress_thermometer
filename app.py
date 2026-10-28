@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from dotenv import load_dotenv
 import gspread
@@ -261,33 +262,13 @@ def render_header():
     )
 
 
-def thermometer_svg(selected):
-    top_y, bottom_y, bulb_r = 20, 460, 34
-    step = (bottom_y - bulb_r - top_y) / 10
-    tube_x, tube_w = 90, 26
-    parts = [
-        f'<svg width="200" height="500" viewBox="0 0 200 500" xmlns="http://www.w3.org/2000/svg">'
-    ]
-    parts.append(
-        f'<rect x="{tube_x - tube_w/2}" y="{top_y}" width="{tube_w}" '
-        f'height="{bottom_y - top_y - bulb_r}" rx="13" fill="#ffffff" stroke="#0b3d6e" stroke-width="3"/>'
-    )
-    parts.append(
-        f'<circle cx="{tube_x}" cy="{bottom_y}" r="{bulb_r}" fill="#ffffff" stroke="#0b3d6e" stroke-width="3"/>'
-    )
-    for i in range(10, -1, -1):
-        y = top_y + (10 - i) * step + 14
-        cx = tube_x + 55
-        fill = "#1f6fae" if selected == i else "#f4f9fd"
-        num_fill = "#ffffff" if selected == i else "#0b3d6e"
-        parts.append(
-            f'<line x1="{tube_x+tube_w/2}" y1="{y}" x2="{cx-14}" y2="{y}" stroke="#0b3d6e" stroke-width="2"/>'
-            f'<circle cx="{cx}" cy="{y}" r="14" fill="{fill}" stroke="#0b3d6e" stroke-width="2"/>'
-            f'<text x="{cx}" y="{y+5}" text-anchor="middle" font-size="13" font-weight="bold" '
-            f'fill="{num_fill}" font-family="Arial">{i}</text>'
-        )
-    parts.append("</svg>")
-    return "".join(parts)
+# Tappable thermometer: a tiny no-build custom component (see the
+# nccn_thermometer_component folder next to this file). It draws the same
+# thermometer and reports which number was tapped.
+_thermometer = components.declare_component(
+    "nccn_thermometer",
+    path=str(APP_DIR / "nccn_thermometer_component"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -354,33 +335,19 @@ elif st.session_state.page == "form":
             f"<p style='text-align:center;font-weight:bold;color:#0b3d6e;margin-bottom:4px'>{t('extremeDistress')}</p>",
             unsafe_allow_html=True,
         )
-        st.markdown(
-            f"<div style='display:flex;justify-content:center'>{thermometer_svg(st.session_state.score)}</div>",
-            unsafe_allow_html=True,
-        )
+        tapped = _thermometer(selected=st.session_state.score, key="thermometer", default=None)
+        # The component hands back its last tap on every rerun, so only act on
+        # a tap we have not seen yet (the nonce is unique per tap). This keeps
+        # the number buttons below working too.
+        if tapped and tapped.get("nonce") != st.session_state.get("last_thermo_nonce"):
+            st.session_state.last_thermo_nonce = tapped.get("nonce")
+            if tapped.get("score") != st.session_state.score:
+                st.session_state.score = tapped.get("score")
+                st.rerun()
         st.markdown(
             f"<p style='text-align:center;font-weight:bold;color:#0b3d6e;margin-top:4px'>{t('noDistress')}</p>",
             unsafe_allow_html=True,
         )
-
-        # A fresh set of 4 columns PER ROW (0-3, 4-7, 8-10), instead of one
-        # shared set of 4 columns with several numbers stacked in each
-        # (the old code put 0,4,8 all in column 1; 1,5,9 in column 2; etc).
-        # On a narrow phone, Streamlit collapses each row's own columns to
-        # a vertical stack in order, so row 1 becomes 0,1,2,3, then row 2
-        # becomes 4,5,6,7, then row 3 becomes 8,9,10 -- always ascending.
-        # The old layout collapsed column-by-column instead of row-by-row
-        # (0,4,8, then 1,5,9, then 2,6,10, then 3,7), which is what made
-        # the numbers look jumbled on mobile.
-        numbers = list(range(11))
-        row_size = 4
-        for row_start in range(0, len(numbers), row_size):
-            row_numbers = numbers[row_start : row_start + row_size]
-            row_cols = st.columns(row_size)
-            for col, i in zip(row_cols, row_numbers):
-                if col.button(str(i), key=f"score_{i}", use_container_width=True):
-                    st.session_state.score = i
-                    st.rerun()
 
         if st.session_state.score is not None:
             st.markdown(
